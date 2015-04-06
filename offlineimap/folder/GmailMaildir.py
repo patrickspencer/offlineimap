@@ -260,21 +260,21 @@ class GmailMaildirFolder(MaildirFolder):
                 uidlist.append(uid)
 
         self.ui.collectingdata(uidlist, self)
-        # This can be slow if there is a lot of modified files
+        # This can be slow if there is a lot of files.
         for uid in uidlist:
             # bail out on CTRL-C or SIGTERM
             if offlineimap.accounts.Account.abort_NOW_signal.is_set():
                 break
 
-            selflabels = self.getmessagelabels(uid)
+            locallabels = self.getmessagelabels(uid)
 
             if statusfolder.uidexists(uid):
                 statuslabels = statusfolder.getmessagelabels(uid)
             else:
                 statuslabels = set()
 
-            addlabels = selflabels - statuslabels
-            dellabels = statuslabels - selflabels
+            addlabels = locallabels - statuslabels
+            dellabels = statuslabels - locallabels
 
             for lb in addlabels:
                 if not lb in addlabellist:
@@ -293,7 +293,7 @@ class GmailMaildirFolder(MaildirFolder):
 
             self.ui.addinglabels(uids, lb, dstfolder)
             if self.repository.account.dryrun:
-                continue #don't actually add in a dryrun
+                continue # don't actually add in a dryrun
             dstfolder.addmessageslabels(uids, set([lb]))
             statusfolder.addmessageslabels(uids, set([lb]))
 
@@ -304,7 +304,7 @@ class GmailMaildirFolder(MaildirFolder):
 
             self.ui.deletinglabels(uids, lb, dstfolder)
             if self.repository.account.dryrun:
-                continue #don't actually remove in a dryrun
+                continue # don't actually remove in a dryrun
             dstfolder.deletemessageslabels(uids, set([lb]))
             statusfolder.deletemessageslabels(uids, set([lb]))
 
@@ -317,7 +317,7 @@ class GmailMaildirFolder(MaildirFolder):
                 break
 
             if self.repository.account.dryrun:
-                continue #don't actually update statusfolder
+                continue # don't actually update statusfolder
 
             filename = self.messagelist[uid]['filename']
             filepath = os.path.join(self.getfullname(), filename)

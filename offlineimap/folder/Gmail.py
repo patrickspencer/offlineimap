@@ -330,39 +330,40 @@ class GmailFolder(IMAPFolder):
             if uid < 0 or not dstfolder.uidexists(uid):
                 continue
 
-            selflabels = self.getmessagelabels(uid) - self.ignorelabels
+            gmaillabels = self.getmessagelabels(uid) - self.ignorelabels
 
             if statusfolder.uidexists(uid):
                 statuslabels = statusfolder.getmessagelabels(uid) - self.ignorelabels
             else:
                 statuslabels = set()
 
-            if selflabels != statuslabels:
+            if gmaillabels != statuslabels:
                 uidlist.append(uid)
 
-        # now sync labels (slow)
+        # Now sync labels.
         mtimes = {}
         labels = {}
+        # This can be slow if there is a lot of modified messages
         for i, uid in enumerate(uidlist):
             # bail out on CTRL-C or SIGTERM
             if offlineimap.accounts.Account.abort_NOW_signal.is_set():
                 break
 
-            selflabels = self.getmessagelabels(uid) - self.ignorelabels
+            gmaillabels = self.getmessagelabels(uid) - self.ignorelabels
 
             if statusfolder.uidexists(uid):
                 statuslabels = statusfolder.getmessagelabels(uid) - self.ignorelabels
             else:
                 statuslabels = set()
 
-            if selflabels != statuslabels:
-                self.ui.settinglabels(uid, i+1, len(uidlist), sorted(selflabels), dstfolder)
+            if gmaillabels != statuslabels:
+                self.ui.settinglabels(uid, i+1, len(uidlist), sorted(gmaillabels), dstfolder)
                 if self.repository.account.dryrun:
-                    continue #don't actually add in a dryrun
-                dstfolder.savemessagelabels(uid, selflabels, ignorelabels = self.ignorelabels)
+                    continue # don't actually add in a dryrun
+                dstfolder.savemessagelabels(uid, gmaillabels, ignorelabels=self.ignorelabels)
                 mtime = dstfolder.getmessagemtime(uid)
                 mtimes[uid] = mtime
-                labels[uid] = selflabels
+                labels[uid] = gmaillabels
 
         # Update statusfolder in a single DB transaction. It is safe, as if something fails,
         # statusfolder will be updated on the next run.
