@@ -64,6 +64,11 @@ class GmailFolder(IMAPFolder):
         self.ignorelabels = set([l for l in re.split(r'\s*,\s*', ignorelabels) if len(l)])
 
 
+    def storeslabels(self):
+        """Should be true for any backend that is able to store message labels."""
+        return True
+
+
     def getmessage(self, uid):
         """Retrieve message with UID from the IMAP server (incl body).  Also
            gets Gmail labels and embeds them into the message.
@@ -288,17 +293,11 @@ class GmailFolder(IMAPFolder):
         # first copy the message
         super(GmailFolder, self).copymessageto(uid, dstfolder, statusfolder, register)
 
-        # sync labels and mtime now when the message is new (the embedded labels are up to date)
-        # otherwise we may be spending time for nothing, as they will get updated on a later pass.
-        if realcopy and self.synclabels:
-            try:
-                mtime = dstfolder.getmessagemtime(uid)
-                labels = dstfolder.getmessagelabels(uid)
-                statusfolder.savemessagelabels(uid, labels, mtime=mtime)
-
-            # dstfolder is not GmailMaildir.
-            except NotImplementedError:
-                return
+        # Store the labels and mtime on the statusfolder.
+        # It checks that target folder supports labels.
+        if realcopy and self.synclabels and dstfolder.storeslabels():
+            labels = dstfolder.getmessagelabels(uid)
+            statusfolder.savemessagelabels(uid, labels, mtime=dstfolder.getmessagemtime(uid))
 
     def syncmessagesto_labels(self, dstfolder, statusfolder):
         """Pass 4: Label Synchronization (Gmail only)
@@ -315,56 +314,57 @@ class GmailFolder(IMAPFolder):
         # the fastest thing in the world though...
         uidlist = []
 
+        # check that target folder supports labels.
+        if not dstfolder.storeslabels():
+            self.ui.warn("Repository '%s' does not support labels."% dstfolder.repository.name)
+            return
+
         # filter the uids (fast)
-        try:
-            for uid in self.getmessageuidlist():
-                # bail out on CTRL-C or SIGTERM
-                if offlineimap.accounts.Account.abort_NOW_signal.is_set():
-                    break
+        for uid in self.getmessageuidlist():
+            # bail out on CTRL-C or SIGTERM
+            if offlineimap.accounts.Account.abort_NOW_signal.is_set():
+                break
 
-                # Ignore messages with negative UIDs missed by pass 1 and
-                # don't do anything if the message has been deleted remotely
-                if uid < 0 or not dstfolder.uidexists(uid):
-                    continue
+            # Ignore messages with negative UIDs missed by pass 1 and
+            # don't do anything if the message has been deleted remotely
+            if uid < 0 or not dstfolder.uidexists(uid):
+                continue
 
-                selflabels = self.getmessagelabels(uid) - self.ignorelabels
+            selflabels = self.getmessagelabels(uid) - self.ignorelabels
 
-                if statusfolder.uidexists(uid):
-                    statuslabels = statusfolder.getmessagelabels(uid) - self.ignorelabels
-                else:
-                    statuslabels = set()
+            if statusfolder.uidexists(uid):
+                statuslabels = statusfolder.getmessagelabels(uid) - self.ignorelabels
+            else:
+                statuslabels = set()
 
-                if selflabels != statuslabels:
-                    uidlist.append(uid)
+            if selflabels != statuslabels:
+                uidlist.append(uid)
 
-            # now sync labels (slow)
-            mtimes = {}
-            labels = {}
-            for i, uid in enumerate(uidlist):
-                # bail out on CTRL-C or SIGTERM
-                if offlineimap.accounts.Account.abort_NOW_signal.is_set():
-                    break
+        # now sync labels (slow)
+        mtimes = {}
+        labels = {}
+        for i, uid in enumerate(uidlist):
+            # bail out on CTRL-C or SIGTERM
+            if offlineimap.accounts.Account.abort_NOW_signal.is_set():
+                break
 
-                selflabels = self.getmessagelabels(uid) - self.ignorelabels
+            selflabels = self.getmessagelabels(uid) - self.ignorelabels
 
-                if statusfolder.uidexists(uid):
-                    statuslabels = statusfolder.getmessagelabels(uid) - self.ignorelabels
-                else:
-                    statuslabels = set()
+            if statusfolder.uidexists(uid):
+                statuslabels = statusfolder.getmessagelabels(uid) - self.ignorelabels
+            else:
+                statuslabels = set()
 
-                if selflabels != statuslabels:
-                    self.ui.settinglabels(uid, i+1, len(uidlist), sorted(selflabels), dstfolder)
-                    if self.repository.account.dryrun:
-                        continue #don't actually add in a dryrun
-                    dstfolder.savemessagelabels(uid, selflabels, ignorelabels = self.ignorelabels)
-                    mtime = dstfolder.getmessagemtime(uid)
-                    mtimes[uid] = mtime
-                    labels[uid] = selflabels
+            if selflabels != statuslabels:
+                self.ui.settinglabels(uid, i+1, len(uidlist), sorted(selflabels), dstfolder)
+                if self.repository.account.dryrun:
+                    continue #don't actually add in a dryrun
+                dstfolder.savemessagelabels(uid, selflabels, ignorelabels = self.ignorelabels)
+                mtime = dstfolder.getmessagemtime(uid)
+                mtimes[uid] = mtime
+                labels[uid] = selflabels
 
-            # Update statusfolder in a single DB transaction. It is safe, as if something fails,
-            # statusfolder will be updated on the next run.
-            statusfolder.savemessageslabelsbulk(labels)
-            statusfolder.savemessagesmtimebulk(mtimes)
-
-        except NotImplementedError:
-            self.ui.warn("Can't sync labels. You need to configure a local repository of type GmailMaildir")
+        # Update statusfolder in a single DB transaction. It is safe, as if something fails,
+        # statusfolder will be updated on the next run.
+        statusfolder.savemessageslabelsbulk(labels)
+        statusfolder.savemessagesmtimebulk(mtimes)

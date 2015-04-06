@@ -97,6 +97,10 @@ class LocalStatusSQLiteFolder(BaseFolder):
     def storesmessages(self):
         return False
 
+    def storeslabels(self):
+        """Should be true for any backend that is able to store message labels."""
+        return True
+
     def getfullname(self):
         return self.filename
 
@@ -338,7 +342,7 @@ class LocalStatusSQLiteFolder(BaseFolder):
     def savemessageslabelsbulk(self, labels):
         """
         Saves labels from a dictionary in a single database operation.
-        
+
         """
         data = [(', '.join(sorted(l)), uid) for uid, l in labels.items()]
         self.__sql_write('UPDATE status SET labels=? WHERE id=?', data, executemany=True)
