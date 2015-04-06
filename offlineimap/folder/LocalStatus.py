@@ -43,6 +43,10 @@ class LocalStatusFolder(BaseFolder):
     def storesmessages(self):
         return 0
 
+    def storeslabels(self):
+        """Should be true for any backend that is able to store message labels."""
+        return True
+
     def isnewfolder(self):
         return not os.path.exists(self.filename)
 

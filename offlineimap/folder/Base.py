@@ -134,6 +134,10 @@ class BaseFolder(object):
 
         return 1
 
+    def storeslabels(self):
+        """Should be true for any backend that is able to store message labels."""
+        return False
+
     def getvisiblename(self):
         """The nametrans-transposed name of the folder's name."""
 

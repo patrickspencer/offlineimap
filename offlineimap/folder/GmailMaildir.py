@@ -39,6 +39,12 @@ class GmailMaildirFolder(MaildirFolder):
         if self.synclabels:
             self.syncmessagesto_passes.append(('syncing labels', self.syncmessagesto_labels))
 
+
+    def storeslabels(self):
+        """Should be true for any backend that is able to store message labels."""
+        return True
+
+
     def quickchanged(self, statusfolder):
         """Returns True if the Maildir has changed. Checks uids, flags and mtimes"""
 
@@ -201,18 +207,11 @@ class GmailMaildirFolder(MaildirFolder):
         # first copy the message
         super(GmailMaildirFolder, self).copymessageto(uid, dstfolder, statusfolder, register)
 
-        # sync labels and mtime now when the message is new (the embedded labels are up to date,
-        # and have already propagated to the remote server.
-        # for message which already existed on the remote, this is useless, as later the labels may
-        # get updated.
-        if realcopy and self.synclabels:
-            try:
-                labels = dstfolder.getmessagelabels(uid)
-                statusfolder.savemessagelabels(uid, labels, mtime=self.getmessagemtime(uid))
-
-            # dstfolder is not GmailMaildir.
-            except NotImplementedError:
-                return
+        # Store the labels and mtime on the statusfolder.
+        # It checks that target folder supports labels.
+        if realcopy and self.synclabels and dstfolder.storeslabels():
+            labels = dstfolder.getmessagelabels(uid)
+            statusfolder.savemessagelabels(uid, labels, mtime=self.getmessagemtime(uid))
 
     def syncmessagesto_labels(self, dstfolder, statusfolder):
         """Pass 4: Label Synchronization (Gmail only)
@@ -234,95 +233,95 @@ class GmailMaildirFolder(MaildirFolder):
         dellabellist = {}
         uidlist = []
 
-        try:
-            # filter uids (fast)
-            for uid in self.getmessageuidlist():
-                # bail out on CTRL-C or SIGTERM
-                if offlineimap.accounts.Account.abort_NOW_signal.is_set():
-                    break
+        # check that target folder supports labels.
+        if not dstfolder.storeslabels():
+            self.ui.warn("Repository '%s' does not support labels."% dstfolder.repository.name)
+            return
 
-                # Ignore messages with negative UIDs missed by pass 1 and
-                # don't do anything if the message has been deleted remotely
-                if uid < 0 or not dstfolder.uidexists(uid):
-                    continue
+        # filter uids (fast)
+        for uid in self.getmessageuidlist():
+            # bail out on CTRL-C or SIGTERM
+            if offlineimap.accounts.Account.abort_NOW_signal.is_set():
+                break
 
-                selfmtime = self.getmessagemtime(uid)
+            # Ignore messages with negative UIDs missed by pass 1 and
+            # don't do anything if the message has been deleted remotely
+            if uid < 0 or not dstfolder.uidexists(uid):
+                continue
 
-                if statusfolder.uidexists(uid):
-                    statusmtime = statusfolder.getmessagemtime(uid)
-                else:
-                    statusmtime = 0
+            selfmtime = self.getmessagemtime(uid)
 
-                if selfmtime > statusmtime:
-                    uidlist.append(uid)
+            if statusfolder.uidexists(uid):
+                statusmtime = statusfolder.getmessagemtime(uid)
+            else:
+                statusmtime = 0
 
+            if selfmtime > statusmtime:
+                uidlist.append(uid)
 
-            self.ui.collectingdata(uidlist, self)
-            # This can be slow if there is a lot of modified files
-            for uid in uidlist:
-                # bail out on CTRL-C or SIGTERM
-                if offlineimap.accounts.Account.abort_NOW_signal.is_set():
-                    break
+        self.ui.collectingdata(uidlist, self)
+        # This can be slow if there is a lot of files.
+        for uid in uidlist:
+            # bail out on CTRL-C or SIGTERM
+            if offlineimap.accounts.Account.abort_NOW_signal.is_set():
+                break
 
-                selflabels = self.getmessagelabels(uid)
+            locallabels = self.getmessagelabels(uid)
 
-                if statusfolder.uidexists(uid):
-                    statuslabels = statusfolder.getmessagelabels(uid)
-                else:
-                    statuslabels = set()
+            if statusfolder.uidexists(uid):
+                statuslabels = statusfolder.getmessagelabels(uid)
+            else:
+                statuslabels = set()
 
-                addlabels = selflabels - statuslabels
-                dellabels = statuslabels - selflabels
+            addlabels = locallabels - statuslabels
+            dellabels = statuslabels - locallabels
 
-                for lb in addlabels:
-                    if not lb in addlabellist:
-                        addlabellist[lb] = []
-                    addlabellist[lb].append(uid)
+            for lb in addlabels:
+                if not lb in addlabellist:
+                    addlabellist[lb] = []
+                addlabellist[lb].append(uid)
 
-                for lb in dellabels:
-                    if not lb in dellabellist:
-                        dellabellist[lb] = []
-                    dellabellist[lb].append(uid)
+            for lb in dellabels:
+                if not lb in dellabellist:
+                    dellabellist[lb] = []
+                dellabellist[lb].append(uid)
 
-            for lb, uids in addlabellist.items():
-                # bail out on CTRL-C or SIGTERM
-                if offlineimap.accounts.Account.abort_NOW_signal.is_set():
-                    break
+        for lb, uids in addlabellist.items():
+            # bail out on CTRL-C or SIGTERM
+            if offlineimap.accounts.Account.abort_NOW_signal.is_set():
+                break
 
-                self.ui.addinglabels(uids, lb, dstfolder)
-                if self.repository.account.dryrun:
-                    continue #don't actually add in a dryrun
-                dstfolder.addmessageslabels(uids, set([lb]))
-                statusfolder.addmessageslabels(uids, set([lb]))
+            self.ui.addinglabels(uids, lb, dstfolder)
+            if self.repository.account.dryrun:
+                continue # don't actually add in a dryrun
+            dstfolder.addmessageslabels(uids, set([lb]))
+            statusfolder.addmessageslabels(uids, set([lb]))
 
-            for lb, uids in dellabellist.items():
-                # bail out on CTRL-C or SIGTERM
-                if offlineimap.accounts.Account.abort_NOW_signal.is_set():
-                    break
+        for lb, uids in dellabellist.items():
+            # bail out on CTRL-C or SIGTERM
+            if offlineimap.accounts.Account.abort_NOW_signal.is_set():
+                break
 
-                self.ui.deletinglabels(uids, lb, dstfolder)
-                if self.repository.account.dryrun:
-                    continue #don't actually remove in a dryrun
-                dstfolder.deletemessageslabels(uids, set([lb]))
-                statusfolder.deletemessageslabels(uids, set([lb]))
+            self.ui.deletinglabels(uids, lb, dstfolder)
+            if self.repository.account.dryrun:
+                continue # don't actually remove in a dryrun
+            dstfolder.deletemessageslabels(uids, set([lb]))
+            statusfolder.deletemessageslabels(uids, set([lb]))
 
-            # Update mtimes on StatusFolder. It is done last to be safe. If something els fails
-            # and the mtime is not updated, the labels will still be synced next time.
-            mtimes = {}
-            for uid in uidlist:
-                # bail out on CTRL-C or SIGTERM
-                if offlineimap.accounts.Account.abort_NOW_signal.is_set():
-                    break
+        # Update mtimes on StatusFolder. It is done last to be safe. If something els fails
+        # and the mtime is not updated, the labels will still be synced next time.
+        mtimes = {}
+        for uid in uidlist:
+            # bail out on CTRL-C or SIGTERM
+            if offlineimap.accounts.Account.abort_NOW_signal.is_set():
+                break
 
-                if self.repository.account.dryrun:
-                    continue #don't actually update statusfolder
+            if self.repository.account.dryrun:
+                continue # don't actually update statusfolder
 
-                filename = self.messagelist[uid]['filename']
-                filepath = os.path.join(self.getfullname(), filename)
-                mtimes[uid] = long(os.stat(filepath).st_mtime)
+            filename = self.messagelist[uid]['filename']
+            filepath = os.path.join(self.getfullname(), filename)
+            mtimes[uid] = long(os.stat(filepath).st_mtime)
 
-            # finally update statusfolder in a single DB transaction
-            statusfolder.savemessagesmtimebulk(mtimes)
-
-        except NotImplementedError:
-            self.ui.warn("Can't sync labels. You need to configure a remote repository of type Gmail.")
+        # finally update statusfolder in a single DB transaction
+        statusfolder.savemessagesmtimebulk(mtimes)
